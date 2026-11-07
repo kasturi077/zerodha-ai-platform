@@ -68,4 +68,123 @@ def render_dashboard(metrics, is_simulation=False):
 
     button_key = "btn_sim" if is_simulation else "btn_real"
     if st.button("Generate Explainable Insights", key=button_key):
-        if not api
+        if not api_key:
+            st.error("Configuration Error: GEMINI_API_KEY is not configured in Streamlit Cloud Secrets.")
+        else:
+            status_text = "Evaluating planned allocation thresholds and sector drift..." if is_simulation else "Evaluating portfolio risk drivers and concentration..."
+            with st.spinner(status_text):
+                client = genai.Client(api_key=api_key)
+                
+                context_instruction = (
+                    "The user is planning a hypothetical trade allocation before investing."
+                    if is_simulation else
+                    "The user is analyzing their existing portfolio."
+                )
+
+                prompt = f"""
+                You are the Zerodha Portfolio Intelligence Explainer.
+                Context: {context_instruction}
+
+                Analyze the following portfolio metrics:
+                - Total Capital: ₹{metrics['total_value']}
+                - Herfindahl Index (HHI): {metrics['herfindahl_index']} (Threshold: >2500 indicates high concentration risk)
+                - Top Sector Exposure: {metrics['top_sector']} at {metrics['top_sector_pct']}% of portfolio
+                - Dominant/Worst Driver: {metrics['worst_performer']}
+
+                STRICT GUIDELINES:
+                1. If this is a simulation, evaluate whether the planned capital allocation is well-balanced or excessively concentrated.
+                2. Explicitly point out any sector bias or single-stock concentration risk based on the HHI score.
+                3. DO NOT give direct buy, sell, or price-target recommendations.
+                4. Highlight one educational 'Risk Alert' or 'Diversification Opportunity'.
+                5. End strictly with:
+                'Disclaimer: Automated, non-discretionary insight for educational and review purposes only.'
+                """
+                
+                response = client.models.generate_content(
+                    model="gemini-3.8-flash",
+                    contents=prompt
+                )
+                
+                st.info(response.text)
+
+
+# --- Tabs ---
+tab_holdings, tab_simulate = st.tabs(["📊 Existing Holdings / CSV", "🧪 What-If Simulation Sandbox"])
+
+# TAB 1: Existing Holdings
+with tab_holdings:
+    st.sidebar.header("📁 Upload Existing Portfolio")
+    uploaded_file = st.sidebar.file_uploader(
+        "Upload Broker CSV", 
+        type=["csv"],
+        help="Compatible with Zerodha Console holdings exports"
+    )
+
+    if uploaded_file is not None:
+        data_source = uploaded_file
+        st.sidebar.success(f"Loaded: {uploaded_file.name}")
+    elif os.path.exists("data/sample_portfolio.csv"):
+        data_source = "data/sample_portfolio.csv"
+    elif os.path.exists("sample_portfolio.csv"):
+        data_source = "sample_portfolio.csv"
+    else:
+        data_source = pd.DataFrame([
+            {"symbol": "INFY", "quantity": 50, "avg_price": 1400.0, "current_price": 1350.0},
+            {"symbol": "TCS", "quantity": 25, "avg_price": 3500.0, "current_price": 3420.0},
+            {"symbol": "HDFCBANK", "quantity": 40, "avg_price": 1480.0, "current_price": 1530.0},
+            {"symbol": "RELIANCE", "quantity": 30, "avg_price": 2400.0, "current_price": 2480.0},
+            {"symbol": "ITC", "quantity": 100, "avg_price": 410.0, "current_price": 435.0}
+        ])
+
+    try:
+        metrics = compute_portfolio_analytics(data_source)
+        render_dashboard(metrics, is_simulation=False)
+    except Exception as e:
+        st.error(f"Error reading portfolio data: {e}")
+
+# TAB 2: Sandbox with Auto Live Prices
+with tab_simulate:
+    st.markdown("### 🛠️ Pre-Trade Allocation Sandbox (Live Market Prices)")
+    st.write("Select stocks and enter your intended quantities. Current market prices are fetched automatically via NSE.")
+
+    # Sandbox input dataframe
+    initial_user_input = pd.DataFrame([
+        {"symbol": "RELIANCE", "quantity": 25},
+        {"symbol": "TCS", "quantity": 15},
+        {"symbol": "HDFCBANK", "quantity": 40},
+        {"symbol": "ITC", "quantity": 100}
+    ])
+
+    edited_df = st.data_editor(
+        initial_user_input,
+        num_rows="dynamic",
+        use_container_width=True,
+        column_config={
+            "symbol": st.column_config.SelectboxColumn(
+                "Stock Symbol (NSE)",
+                help="Select an NSE ticker to simulate",
+                options=SAMPLE_TICKERS,
+                required=True
+            ),
+            "quantity": st.column_config.NumberColumn(
+                "Quantity to Purchase",
+                min_value=1,
+                step=1,
+                required=True
+            )
+        }
+    )
+
+    if edited_df.empty or edited_df["quantity"].sum() == 0:
+        st.warning("Please add at least one stock with a quantity greater than zero to simulate.")
+    else:
+        with st.spinner("Fetching live prices from NSE..."):
+            sim_df = edited_df.copy()
+            sim_df["current_price"] = sim_df["symbol"].apply(fetch_live_price)
+            sim_df["avg_price"] = sim_df["current_price"]
+
+        try:
+            sim_metrics = compute_portfolio_analytics(sim_df)
+            render_dashboard(sim_metrics, is_simulation=True)
+        except Exception as e:
+            st.error(f"Simulation calculation error: {e}")
