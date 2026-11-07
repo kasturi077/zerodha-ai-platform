@@ -1,6 +1,9 @@
 import streamlit as st
 import pandas as pd
-from analytics.exposure_metrics import compute_portfolio_analytics
+try:
+    from analytics.exposure_metrics import compute_portfolio_analytics
+except ModuleNotFoundError:
+    from exposure_metrics import compute_portfolio_analytics
 from google import genai
 
 st.set_page_config(page_title="Zerodha AI Financial Intelligence", layout="wide")
