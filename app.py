@@ -1,9 +1,10 @@
 import os
 import streamlit as st
 import pandas as pd
+import yfinance as yf
 from google import genai
 
-# Robust import for exposure_metrics whether it's in analytics/ or root
+# Robust import for exposure_metrics
 try:
     from analytics.exposure_metrics import compute_portfolio_analytics
 except ModuleNotFoundError:
@@ -14,7 +15,6 @@ st.set_page_config(page_title="Zerodha AI Financial Intelligence", layout="wide"
 st.title("📈 Zerodha AI Financial Intelligence Platform")
 st.caption("Explainable Portfolio Analytics & Non-Discretionary Insights Engine")
 
-# Pre-defined list of common stocks for easy selection in sandbox
 SAMPLE_TICKERS = [
     "INFY", "TCS", "WIPRO", "HCLTECH",
     "HDFCBANK", "ICICIBANK", "SBIN", "KOTAKBANK",
@@ -22,10 +22,28 @@ SAMPLE_TICKERS = [
     "MARUTI", "SUNPHARMA"
 ]
 
-def render_dashboard(metrics, is_simulation=False):
-    """Reusable layout to render KPI metrics, holdings table, and the AI Explainer"""
+# Cache live prices so it doesn't repeatedly query Yahoo Finance
+@st.cache_data(ttl=300)
+def fetch_live_price(symbol: str) -> float:
+    try:
+        ticker = yf.Ticker(f"{symbol}.NS")
+        price = ticker.fast_info.get('last_price') or ticker.fast_info.get('lastPrice')
+        if price:
+            return round(float(price), 2)
+    except Exception:
+        pass
     
-    # 1. KPI Badges
+    # Fallback default prices if market is closed or API fails
+    fallback_prices = {
+        "INFY": 1420.0, "TCS": 3550.0, "WIPRO": 450.0, "HCLTECH": 1500.0,
+        "HDFCBANK": 1540.0, "ICICIBANK": 1050.0, "SBIN": 780.0, "KOTAKBANK": 1720.0,
+        "RELIANCE": 2520.0, "ITC": 435.0, "HINDUNILVR": 2400.0, "TATAMOTORS": 680.0,
+        "MARUTI": 11500.0, "SUNPHARMA": 1180.0
+    }
+    return fallback_prices.get(symbol, 1000.0)
+
+def render_dashboard(metrics, is_simulation=False):
+    # 1. Metric Badges
     col1, col2, col3, col4 = st.columns(4)
     label_pnl = "Hypothetical P&L" if is_simulation else "Unrealized P&L"
     col1.metric("Total Portfolio Value", f"₹{metrics['total_value']:,.2f}")
@@ -89,12 +107,10 @@ def render_dashboard(metrics, is_simulation=False):
                 st.info(response.text)
 
 
-# --- Application Navigation Tabs ---
+# --- Tabs ---
 tab_holdings, tab_simulate = st.tabs(["📊 Existing Holdings / CSV", "🧪 What-If Simulation Sandbox"])
 
-# ==========================================
-# TAB 1: Existing Holdings / CSV Upload
-# ==========================================
+# TAB 1: Existing Holdings
 with tab_holdings:
     st.sidebar.header("📁 Upload Existing Portfolio")
     uploaded_file = st.sidebar.file_uploader(
@@ -125,59 +141,50 @@ with tab_holdings:
     except Exception as e:
         st.error(f"Error reading portfolio data: {e}")
 
-# ==========================================
-# TAB 2: Interactive Sandbox (What-If)
-# ==========================================
+# TAB 2: Sandbox with Auto Live Prices
 with tab_simulate:
-    st.markdown("### 🛠️ Pre-Trade Allocation Sandbox")
-    st.write("Add stocks, adjust quantities, or change prices below to test risk exposure before executing trades.")
+    st.markdown("### 🛠️ Pre-Trade Allocation Sandbox (Live Market Prices)")
+    st.write("Sirf stock chuniye aur quantity daliye — Live Market Price automatically fetch ho jayega.")
 
-    # Default starting basket for testing
-    initial_sandbox_data = pd.DataFrame([
-        {"symbol": "RELIANCE", "quantity": 20, "avg_price": 2500.0, "current_price": 2500.0},
-        {"symbol": "TCS", "quantity": 15, "avg_price": 3400.0, "current_price": 3400.0},
-        {"symbol": "HDFCBANK", "quantity": 30, "avg_price": 1550.0, "current_price": 1550.0},
-        {"symbol": "INFY", "quantity": 40, "avg_price": 1350.0, "current_price": 1350.0}
+    # Sandbox input dataframe (User only enters symbol & quantity)
+    initial_user_input = pd.DataFrame([
+        {"symbol": "RELIANCE", "quantity": 25},
+        {"symbol": "TCS", "quantity": 15},
+        {"symbol": "HDFCBANK", "quantity": 40},
+        {"symbol": "ITC", "quantity": 100}
     ])
 
-    # Interactive table editor
     edited_df = st.data_editor(
-        initial_sandbox_data,
+        initial_user_input,
         num_rows="dynamic",
         use_container_width=True,
         column_config={
             "symbol": st.column_config.SelectboxColumn(
-                "Stock Symbol",
-                help="Select or enter NSE ticker symbol",
+                "Stock Symbol (NSE)",
+                help="Pick a stock to simulate",
                 options=SAMPLE_TICKERS,
                 required=True
             ),
             "quantity": st.column_config.NumberColumn(
-                "Target Quantity",
+                "Quantity to Buy",
                 min_value=1,
                 step=1,
-                required=True
-            ),
-            "avg_price": st.column_config.NumberColumn(
-                "Expected Buy Price (₹)",
-                min_value=1.0,
-                format="₹%.2f",
-                required=True
-            ),
-            "current_price": st.column_config.NumberColumn(
-                "Current Market Price (₹)",
-                min_value=1.0,
-                format="₹%.2f",
                 required=True
             )
         }
     )
 
     if edited_df.empty or edited_df["quantity"].sum() == 0:
-        st.warning("Please add at least one stock with a quantity greater than zero to simulate.")
+        st.warning("Simulation ke liye kam se kam ek stock aur quantity enter karein.")
     else:
+        with st.spinner("Fetching live prices from NSE via Yahoo Finance..."):
+            sim_df = edited_df.copy()
+            # Fetch live prices automatically
+            sim_df["current_price"] = sim_df["symbol"].apply(fetch_live_price)
+            sim_df["avg_price"] = sim_df["current_price"]  # Base day-one investment (0% P&L)
+
         try:
-            sim_metrics = compute_portfolio_analytics(edited_df)
+            sim_metrics = compute_portfolio_analytics(sim_df)
             render_dashboard(sim_metrics, is_simulation=True)
         except Exception as e:
             st.error(f"Simulation calculation error: {e}")
