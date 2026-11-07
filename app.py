@@ -142,12 +142,11 @@ with tab_holdings:
     except Exception as e:
         st.error(f"Error reading portfolio data: {e}")
 
-# TAB 2: Sandbox with Auto Live Prices
+# TAB 2: Sandbox with Transparent Live Prices
 with tab_simulate:
-    st.markdown("### 🛠️ Pre-Trade Allocation Sandbox (Live Market Prices)")
-    st.write("Select stocks and enter your intended quantities. Current market prices are fetched automatically via NSE.")
+    st.markdown("### 🛠️ Pre-Trade Allocation Sandbox")
+    st.caption("Select tickers and quantities. Live Last Traded Prices (LTP) fetch automatically via NSE.")
 
-    # Sandbox input dataframe
     initial_user_input = pd.DataFrame([
         {"symbol": "RELIANCE", "quantity": 25},
         {"symbol": "TCS", "quantity": 15},
@@ -162,7 +161,7 @@ with tab_simulate:
         column_config={
             "symbol": st.column_config.SelectboxColumn(
                 "Stock Symbol (NSE)",
-                help="Select an NSE ticker to simulate",
+                help="Select an NSE ticker",
                 options=SAMPLE_TICKERS,
                 required=True
             ),
@@ -178,10 +177,27 @@ with tab_simulate:
     if edited_df.empty or edited_df["quantity"].sum() == 0:
         st.warning("Please add at least one stock with a quantity greater than zero to simulate.")
     else:
-        with st.spinner("Fetching live prices from NSE..."):
+        with st.spinner("Fetching live market quotes from NSE..."):
             sim_df = edited_df.copy()
+            # Fetch live prices and compute allocation
             sim_df["current_price"] = sim_df["symbol"].apply(fetch_live_price)
             sim_df["avg_price"] = sim_df["current_price"]
+            sim_df["total_investment"] = sim_df["quantity"] * sim_df["current_price"]
+
+        # --- LIVE PRICE TRANSPARENCY CARD ---
+        st.markdown("#### ⚡ Live Market Quotes & Planned Capital")
+        
+        # Display clean summary columns so the user immediately sees the prices
+        quote_summary = sim_df[["symbol", "quantity", "current_price", "total_investment"]].copy()
+        quote_summary.columns = ["Stock Ticker", "Quantity", "Live LTP (NSE)", "Estimated Capital Required (₹)"]
+        
+        st.dataframe(
+            quote_summary.style.format({
+                "Live LTP (NSE)": "₹{:,.2f}",
+                "Estimated Capital Required (₹)": "₹{:,.2f}"
+            }),
+            use_container_width=True
+        )
 
         try:
             sim_metrics = compute_portfolio_analytics(sim_df)
