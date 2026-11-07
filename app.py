@@ -12,16 +12,28 @@ st.title("📈 Zerodha AI Financial Intelligence Platform")
 st.caption("Explainable Portfolio Analytics & Non-Discretionary Insights Engine")
 
 # --- File Uploader / Input Source ---
-st.sidebar.header("📁 Portfolio Data Source")
-uploaded_file = st.sidebar.file_uploader(
-    "Upload Portfolio CSV", 
-    type=["csv"],
-    help="CSV must contain: symbol, sector, quantity, avg_price, current_price"
-)
+import os
 
-# Determine data source: uploaded file if present, else fallback sample
-data_source = uploaded_file if uploaded_file is not None else "data/sample_portfolio.csv"
-
+# Determine data source: uploaded file, local file path, or built-in default dataframe
+if uploaded_file is not None:
+    data_source = uploaded_file
+elif os.path.exists("data/sample_portfolio.csv"):
+    data_source = "data/sample_portfolio.csv"
+elif os.path.exists("sample_portfolio.csv"):
+    data_source = "sample_portfolio.csv"
+elif os.path.exists("data/sample_zerodha_console.csv"):
+    data_source = "data/sample_zerodha_console.csv"
+elif os.path.exists("sample_zerodha_console.csv"):
+    data_source = "sample_zerodha_console.csv"
+else:
+    # Safe default: inline fallback data so the app always renders smoothly
+    data_source = pd.DataFrame([
+        {"symbol": "INFY", "sector": "Information Technology", "quantity": 50, "avg_price": 1400.0, "current_price": 1350.0},
+        {"symbol": "TCS", "sector": "Information Technology", "quantity": 25, "avg_price": 3500.0, "current_price": 3420.0},
+        {"symbol": "HDFCBANK", "sector": "Banking & Financials", "quantity": 40, "avg_price": 1480.0, "current_price": 1530.0},
+        {"symbol": "RELIANCE", "sector": "Energy & Conglomerate", "quantity": 30, "avg_price": 2400.0, "current_price": 2480.0},
+        {"symbol": "ITC", "sector": "Consumer Goods (FMCG)", "quantity": 100, "avg_price": 410.0, "current_price": 435.0}
+    ])
 try:
     metrics = compute_portfolio_analytics(data_source)
     
