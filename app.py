@@ -1,10 +1,13 @@
+import os
 import streamlit as st
 import pandas as pd
+from google import genai
+
+# Robust import for exposure_metrics whether it's in analytics/ or root
 try:
     from analytics.exposure_metrics import compute_portfolio_analytics
 except ModuleNotFoundError:
     from exposure_metrics import compute_portfolio_analytics
-from google import genai
 
 st.set_page_config(page_title="Zerodha AI Financial Intelligence", layout="wide")
 
@@ -12,7 +15,12 @@ st.title("📈 Zerodha AI Financial Intelligence Platform")
 st.caption("Explainable Portfolio Analytics & Non-Discretionary Insights Engine")
 
 # --- File Uploader / Input Source ---
-import os
+st.sidebar.header("📁 Portfolio Data Source")
+uploaded_file = st.sidebar.file_uploader(
+    "Upload Portfolio CSV", 
+    type=["csv"],
+    help="CSV must contain: symbol, quantity, avg_price (or standard Zerodha Console format)"
+)
 
 # Determine data source: uploaded file, local file path, or built-in default dataframe
 if uploaded_file is not None:
@@ -34,13 +42,14 @@ else:
         {"symbol": "RELIANCE", "sector": "Energy & Conglomerate", "quantity": 30, "avg_price": 2400.0, "current_price": 2480.0},
         {"symbol": "ITC", "sector": "Consumer Goods (FMCG)", "quantity": 100, "avg_price": 410.0, "current_price": 435.0}
     ])
+
 try:
     metrics = compute_portfolio_analytics(data_source)
     
     if uploaded_file is not None:
         st.sidebar.success(f"Loaded: {uploaded_file.name}")
     else:
-        st.sidebar.info("Using default sample portfolio (`sample_portfolio.csv`).")
+        st.sidebar.info("Using baseline demonstration portfolio.")
 
     # --- Holdings Preview ---
     with st.expander("🔍 View Raw Portfolio Holdings", expanded=False):
@@ -60,11 +69,13 @@ try:
 
     # --- AI Reasoning Layer ---
     st.subheader("🤖 Explainable AI Reasoning Layer")
-    api_key = st.text_input("Enter your Gemini API Key:", type="password")
+    
+    # Retrieve key from Streamlit Cloud Secrets (or environment variable)
+    api_key = st.secrets.get("GEMINI_API_KEY") or os.environ.get("GEMINI_API_KEY")
 
     if st.button("Generate Explainable Insights"):
         if not api_key:
-            st.warning("Please provide a Gemini API Key to run the reasoning agent.")
+            st.error("Configuration Error: GEMINI_API_KEY is not set in Streamlit Cloud Secrets.")
         else:
             with st.spinner("Evaluating exposure thresholds, sector drift, and performance drivers..."):
                 client = genai.Client(api_key=api_key)
