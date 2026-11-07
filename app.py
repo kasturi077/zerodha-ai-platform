@@ -14,85 +14,69 @@ st.set_page_config(page_title="Zerodha AI Financial Intelligence", layout="wide"
 st.title("📈 Zerodha AI Financial Intelligence Platform")
 st.caption("Explainable Portfolio Analytics & Non-Discretionary Insights Engine")
 
-# --- File Uploader / Input Source ---
-st.sidebar.header("📁 Portfolio Data Source")
-uploaded_file = st.sidebar.file_uploader(
-    "Upload Portfolio CSV", 
-    type=["csv"],
-    help="CSV must contain: symbol, quantity, avg_price (or standard Zerodha Console format)"
-)
+# Pre-defined list of common stocks for easy selection in sandbox
+SAMPLE_TICKERS = [
+    "INFY", "TCS", "WIPRO", "HCLTECH",
+    "HDFCBANK", "ICICIBANK", "SBIN", "KOTAKBANK",
+    "RELIANCE", "ITC", "HINDUNILVR", "TATAMOTORS",
+    "MARUTI", "SUNPHARMA"
+]
 
-# Determine data source: uploaded file, local file path, or built-in default dataframe
-if uploaded_file is not None:
-    data_source = uploaded_file
-elif os.path.exists("data/sample_portfolio.csv"):
-    data_source = "data/sample_portfolio.csv"
-elif os.path.exists("sample_portfolio.csv"):
-    data_source = "sample_portfolio.csv"
-elif os.path.exists("data/sample_zerodha_console.csv"):
-    data_source = "data/sample_zerodha_console.csv"
-elif os.path.exists("sample_zerodha_console.csv"):
-    data_source = "sample_zerodha_console.csv"
-else:
-    # Safe default: inline fallback data so the app always renders smoothly
-    data_source = pd.DataFrame([
-        {"symbol": "INFY", "sector": "Information Technology", "quantity": 50, "avg_price": 1400.0, "current_price": 1350.0},
-        {"symbol": "TCS", "sector": "Information Technology", "quantity": 25, "avg_price": 3500.0, "current_price": 3420.0},
-        {"symbol": "HDFCBANK", "sector": "Banking & Financials", "quantity": 40, "avg_price": 1480.0, "current_price": 1530.0},
-        {"symbol": "RELIANCE", "sector": "Energy & Conglomerate", "quantity": 30, "avg_price": 2400.0, "current_price": 2480.0},
-        {"symbol": "ITC", "sector": "Consumer Goods (FMCG)", "quantity": 100, "avg_price": 410.0, "current_price": 435.0}
-    ])
-
-try:
-    metrics = compute_portfolio_analytics(data_source)
+def render_dashboard(metrics, is_simulation=False):
+    """Reusable layout to render KPI metrics, holdings table, and the AI Explainer"""
     
-    if uploaded_file is not None:
-        st.sidebar.success(f"Loaded: {uploaded_file.name}")
-    else:
-        st.sidebar.info("Using baseline demonstration portfolio.")
-
-    # --- Holdings Preview ---
-    with st.expander("🔍 View Raw Portfolio Holdings", expanded=False):
-        st.dataframe(
-            metrics["df"][["symbol", "sector", "quantity", "avg_price", "current_price", "pnl"]],
-            use_container_width=True
-        )
-
-    # --- Metric KPI Badges ---
+    # 1. KPI Badges
     col1, col2, col3, col4 = st.columns(4)
+    label_pnl = "Hypothetical P&L" if is_simulation else "Unrealized P&L"
     col1.metric("Total Portfolio Value", f"₹{metrics['total_value']:,.2f}")
-    col2.metric("Unrealized P&L", f"₹{metrics['total_pnl']:,.2f}", f"{metrics['pnl_percentage']}%")
+    col2.metric(label_pnl, f"₹{metrics['total_pnl']:,.2f}", f"{metrics['pnl_percentage']}%")
     col3.metric("Concentration (HHI)", f"{metrics['herfindahl_index']}", f"{metrics['volatility_flag']} RISK")
     col4.metric("Top Sector", f"{metrics['top_sector']}", f"{metrics['top_sector_pct']}% Exposure")
 
     st.divider()
 
-    # --- AI Reasoning Layer ---
-    st.subheader("🤖 Explainable AI Reasoning Layer")
+    # 2. Holdings Table
+    with st.expander("🔍 View Calculated Allocation & Weights", expanded=False):
+        display_df = metrics["df"][["symbol", "sector", "quantity", "avg_price", "current_price", "pnl", "weight"]].copy()
+        display_df["weight"] = (display_df["weight"] * 100).round(2).astype(str) + "%"
+        st.dataframe(display_df, use_container_width=True)
+
+    # 3. AI Reasoning Layer
+    mode_label = "Pre-Trade Simulation Review" if is_simulation else "Holdings Diagnostics"
+    st.subheader(f"🤖 Explainable AI Reasoning Layer ({mode_label})")
     
-    # Retrieve key from Streamlit Cloud Secrets (or environment variable)
     api_key = st.secrets.get("GEMINI_API_KEY") or os.environ.get("GEMINI_API_KEY")
 
-    if st.button("Generate Explainable Insights"):
+    button_key = "btn_sim" if is_simulation else "btn_real"
+    if st.button("Generate Explainable Insights", key=button_key):
         if not api_key:
-            st.error("Configuration Error: GEMINI_API_KEY is not set in Streamlit Cloud Secrets.")
+            st.error("Configuration Error: GEMINI_API_KEY is not configured in Streamlit Cloud Secrets.")
         else:
-            with st.spinner("Evaluating exposure thresholds, sector drift, and performance drivers..."):
+            status_text = "Evaluating planned allocation thresholds and sector drift..." if is_simulation else "Evaluating portfolio risk drivers and concentration..."
+            with st.spinner(status_text):
                 client = genai.Client(api_key=api_key)
                 
+                context_instruction = (
+                    "The user is planning a hypothetical trade allocation before investing."
+                    if is_simulation else
+                    "The user is analyzing their existing portfolio."
+                )
+
                 prompt = f"""
                 You are the Zerodha Portfolio Intelligence Explainer.
-                Analyze the following portfolio state using ONLY these computed metrics:
-                - Total P&L: {metrics['pnl_percentage']}% (₹{metrics['total_pnl']})
-                - Herfindahl Index (HHI): {metrics['herfindahl_index']} (Threshold: >2500 indicates elevated concentration risk)
+                Context: {context_instruction}
+
+                Analyze the following portfolio metrics:
+                - Total Capital: ₹{metrics['total_value']}
+                - Herfindahl Index (HHI): {metrics['herfindahl_index']} (Threshold: >2500 indicates high concentration risk)
                 - Top Sector Exposure: {metrics['top_sector']} at {metrics['top_sector_pct']}% of portfolio
-                - Primary Negative Contributor: {metrics['worst_performer']}
+                - Dominant/Worst Driver: {metrics['worst_performer']}
 
                 STRICT GUIDELINES:
-                1. Explain the primary cause of portfolio movement in objective, plain English.
-                2. Highlight concentration risk or lack thereof based on the HHI score.
-                3. DO NOT recommend buying, selling, or timing specific securities.
-                4. Offer one structured review area under 'Risk Alert' or 'Diversification Opportunity'.
+                1. If this is a simulation, evaluate whether the planned capital allocation is well-balanced or excessively concentrated.
+                2. Explicitly point out any sector bias or single-stock concentration risk based on the HHI score.
+                3. DO NOT give direct buy, sell, or price-target recommendations.
+                4. Highlight one educational 'Risk Alert' or 'Diversification Opportunity'.
                 5. End strictly with:
                 'Disclaimer: Automated, non-discretionary insight for educational and review purposes only.'
                 """
@@ -104,7 +88,96 @@ try:
                 
                 st.info(response.text)
 
-except ValueError as ve:
-    st.error(f"Data Schema Error: {ve}")
-except Exception as e:
-    st.error(f"Error processing portfolio: {e}")
+
+# --- Application Navigation Tabs ---
+tab_holdings, tab_simulate = st.tabs(["📊 Existing Holdings / CSV", "🧪 What-If Simulation Sandbox"])
+
+# ==========================================
+# TAB 1: Existing Holdings / CSV Upload
+# ==========================================
+with tab_holdings:
+    st.sidebar.header("📁 Upload Existing Portfolio")
+    uploaded_file = st.sidebar.file_uploader(
+        "Upload Broker CSV", 
+        type=["csv"],
+        help="Compatible with Zerodha Console holdings exports"
+    )
+
+    if uploaded_file is not None:
+        data_source = uploaded_file
+        st.sidebar.success(f"Loaded: {uploaded_file.name}")
+    elif os.path.exists("data/sample_portfolio.csv"):
+        data_source = "data/sample_portfolio.csv"
+    elif os.path.exists("sample_portfolio.csv"):
+        data_source = "sample_portfolio.csv"
+    else:
+        data_source = pd.DataFrame([
+            {"symbol": "INFY", "quantity": 50, "avg_price": 1400.0, "current_price": 1350.0},
+            {"symbol": "TCS", "quantity": 25, "avg_price": 3500.0, "current_price": 3420.0},
+            {"symbol": "HDFCBANK", "quantity": 40, "avg_price": 1480.0, "current_price": 1530.0},
+            {"symbol": "RELIANCE", "quantity": 30, "avg_price": 2400.0, "current_price": 2480.0},
+            {"symbol": "ITC", "quantity": 100, "avg_price": 410.0, "current_price": 435.0}
+        ])
+
+    try:
+        metrics = compute_portfolio_analytics(data_source)
+        render_dashboard(metrics, is_simulation=False)
+    except Exception as e:
+        st.error(f"Error reading portfolio data: {e}")
+
+# ==========================================
+# TAB 2: Interactive Sandbox (What-If)
+# ==========================================
+with tab_simulate:
+    st.markdown("### 🛠️ Pre-Trade Allocation Sandbox")
+    st.write("Add stocks, adjust quantities, or change prices below to test risk exposure before executing trades.")
+
+    # Default starting basket for testing
+    initial_sandbox_data = pd.DataFrame([
+        {"symbol": "RELIANCE", "quantity": 20, "avg_price": 2500.0, "current_price": 2500.0},
+        {"symbol": "TCS", "quantity": 15, "avg_price": 3400.0, "current_price": 3400.0},
+        {"symbol": "HDFCBANK", "quantity": 30, "avg_price": 1550.0, "current_price": 1550.0},
+        {"symbol": "INFY", "quantity": 40, "avg_price": 1350.0, "current_price": 1350.0}
+    ])
+
+    # Interactive table editor
+    edited_df = st.data_editor(
+        initial_sandbox_data,
+        num_rows="dynamic",
+        use_container_width=True,
+        column_config={
+            "symbol": st.column_config.SelectboxColumn(
+                "Stock Symbol",
+                help="Select or enter NSE ticker symbol",
+                options=SAMPLE_TICKERS,
+                required=True
+            ),
+            "quantity": st.column_config.NumberColumn(
+                "Target Quantity",
+                min_value=1,
+                step=1,
+                required=True
+            ),
+            "avg_price": st.column_config.NumberColumn(
+                "Expected Buy Price (₹)",
+                min_value=1.0,
+                format="₹%.2f",
+                required=True
+            ),
+            "current_price": st.column_config.NumberColumn(
+                "Current Market Price (₹)",
+                min_value=1.0,
+                format="₹%.2f",
+                required=True
+            )
+        }
+    )
+
+    if edited_df.empty or edited_df["quantity"].sum() == 0:
+        st.warning("Please add at least one stock with a quantity greater than zero to simulate.")
+    else:
+        try:
+            sim_metrics = compute_portfolio_analytics(edited_df)
+            render_dashboard(sim_metrics, is_simulation=True)
+        except Exception as e:
+            st.error(f"Simulation calculation error: {e}")
