@@ -1,0 +1,6 @@
+symbol,sector,quantity,avg_price,current_price
+INFY,Information Technology,100,1400.0,1340.0
+TCS,Information Technology,30,3500.0,3410.0
+HDFCBANK,Banking,50,1500.0,1520.0
+RELIANCE,Energy,25,2400.0,2450.0
+ITC,Consumer Goods,200,410.0,425.0
